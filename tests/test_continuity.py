@@ -1,4 +1,4 @@
-"""验证确定性的文件保护约束，不将其解释为模型每次都遵循指令。"""
+"""检查文件保护的实际结果；这些测试不能证明 Agent 每次都遵循提示词。"""
 import ast
 import importlib.util
 import json
@@ -28,7 +28,7 @@ memory = load("memory")
 
 
 def snapshot(root):
-    """Hash-free full byte/mode/mtime snapshot detects writes, including unchanged content."""
+    """比较原始内容、权限和修改时间，连内容未变的重复写入也能发现。"""
     return {p.relative_to(root).as_posix():
             (p.is_dir(), p.read_bytes() if p.is_file() else None,
              stat.S_IMODE(p.stat().st_mode), p.stat().st_mtime_ns)
@@ -38,7 +38,7 @@ def snapshot(root):
 class RelayTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        # macOS /var or /tmp can be platform symlinks; fixtures use canonical paths.
+        # macOS 临时目录可能经过系统链接，测试先解析为真实路径。
         self.base = Path(self.temp.name).resolve()
         self.skills = self.base / "user skills"
         self.home = self.base / "codex home"
@@ -266,7 +266,7 @@ class RelayTests(unittest.TestCase):
         source = self.base / "new-source"
         shutil.copytree(SKILL, source, ignore=shutil.ignore_patterns("__pycache__"))
         (source / "SKILL.md").write_text((source / "SKILL.md").read_text() + "\nNew version note.\n")
-        # Force a global managed-block update as part of this upgrade.
+        # 让这次更新也修改 Relay 配置，检查全局写入失败时能否恢复原安装。
         snippet = source / "assets" / "AGENTS.snippet.md"
         snippet.write_text(snippet.read_text().replace("## Relay", "## Relay V1.1"))
         before_agents = self.agents.read_bytes()
@@ -382,6 +382,22 @@ class RelayTests(unittest.TestCase):
         before = snapshot(self.project)
         result = memory.inspect(self.project)
         self.assertEqual(len(result["files"]["HANDOFF.md"]["sha256"]), 64)
+        self.assertEqual(before, snapshot(self.project))
+
+    def test_old_memory_headings_and_custom_content_remain_usable(self):
+        ai = self.project / ".ai"
+        ai.mkdir()
+        old = {
+            "PROJECT.md": "# Project\r\n## User goals\r\n离线使用，不新增依赖。\r\n## 自定义说明\r\n保留我的决定。\r\n",
+            "HANDOFF.md": "# Previous work\n## Next step\n尚未完成导出。\n用户没有授权开始下一阶段。\n",
+        }
+        for name, content in old.items():
+            (ai / name).write_bytes(content.encode("utf-8"))
+        before = snapshot(self.project)
+        result = memory.inspect(self.project)
+        for name, content in old.items():
+            self.assertEqual(result["files"][name]["content"], content)
+        self.assertEqual(memory.initialize(self.project)["created"], [])
         self.assertEqual(before, snapshot(self.project))
 
     def test_symlink_memory_is_refused_without_outside_writes(self):

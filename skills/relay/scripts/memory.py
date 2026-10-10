@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""只创建缺失模板或只读检查记忆，不调用模型或外部服务。"""
+"""只创建缺少的项目记录或读取已有内容，不调用模型或外部服务。"""
 import argparse
 import hashlib
 import json
@@ -13,7 +13,7 @@ NAMES = ("PROJECT.md", "HANDOFF.md")
 def safe(path):
     for part in reversed((path, *path.parents)):
         if part.is_symlink():
-            raise ValueError(f"拒绝跟随记忆符号链接： {part}")
+            raise ValueError(f"记忆路径含符号链接，停止处理该路径： {part}")
 
 
 def root_path(project):
@@ -29,15 +29,15 @@ def initialize(project):
     memory = root / ".ai"
     safe(memory)
     if memory.exists() and not memory.is_dir():
-        raise ValueError(".ai 不是目录")
-    # 首次写入前核对两处目标和源模板。
+        raise ValueError(".ai 已存在，但不是目录；保留原内容，请先核对")
+    # 创建文件前先检查两份目标和模板，避免只写了一份才发现另一份异常。
     assets = Path(__file__).absolute().parents[1] / "assets"
     templates = {}
     for name in NAMES:
         target = memory / name
         safe(target)
         if target.exists() and not target.is_file():
-            raise ValueError(f"记忆目标不是普通文件： {target}")
+            raise ValueError(f"记录路径不是普通文件，未修改： {target}")
         templates[name] = (assets / name.replace(".md", ".template.md")).read_bytes()
     memory.mkdir(exist_ok=True)
     result = {"root": str(root), "created": [], "preserved": []}
@@ -48,7 +48,7 @@ def initialize(project):
         except FileExistsError:
             safe(target)
             if not target.is_file():
-                raise ValueError(f"出现非普通记忆目标： {target}")
+                raise ValueError(f"记录路径在操作中变成非普通文件，已停止： {target}")
             result["preserved"].append(name)
             continue
         with os.fdopen(fd, "wb") as handle:
@@ -64,7 +64,7 @@ def inspect(project):
     memory = root / ".ai"
     safe(memory)
     if memory.exists() and not memory.is_dir():
-        raise ValueError(".ai 不是目录")
+        raise ValueError(".ai 已存在，但不是目录；保留原内容，请先核对")
     result = {"root": str(root), "files": {}}
     for name in NAMES:
         path = memory / name
@@ -73,7 +73,7 @@ def inspect(project):
             result["files"][name] = {"exists": False}
             continue
         if not path.is_file():
-            raise ValueError(f"记忆目标不是普通文件： {path}")
+            raise ValueError(f"记录路径不是普通文件，未修改： {path}")
         data = path.read_bytes()
         result["files"][name] = {"exists": True, "sha256": hashlib.sha256(data).hexdigest(),
                                  "content": data.decode("utf-8")}
@@ -83,13 +83,13 @@ def inspect(project):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("init", "inspect"))
-    parser.add_argument("--project", required=True, type=Path, help="显式指定用户的实际项目根目录")
+    parser.add_argument("--project", required=True, type=Path, help="指定用户实际要处理的项目根目录")
     args = parser.parse_args()
     try:
         result = initialize(args.project) if args.action == "init" else inspect(args.project)
         print(json.dumps(result, indent=2, ensure_ascii=False))
     except (ValueError, OSError, UnicodeError) as exc:
-        print(f"记忆操作失败： {exc}", file=sys.stderr)
+        print(f"未能完成项目记录操作： {exc}", file=sys.stderr)
         return 1
     return 0
 
