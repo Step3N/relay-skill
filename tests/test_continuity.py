@@ -35,7 +35,7 @@ def snapshot(root):
             for p in root.rglob("*") if not p.is_symlink()}
 
 
-class ContinuityTests(unittest.TestCase):
+class RelayTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         # macOS /var or /tmp can be platform symlinks; fixtures use canonical paths.
@@ -54,119 +54,6 @@ class ContinuityTests(unittest.TestCase):
 
     def install(self, **kwargs):
         return installer.install(SKILL, self.skills, self.home, **kwargs)
-
-    def legacy_install(self):
-        target = self.skills / installer.LEGACY_NAME
-        target.mkdir(parents=True)
-        files = {key: value.replace(b"relay", b"agent-continuity")
-                 for key, value in installer.package(SKILL).items()}
-        for key, value in files.items():
-            path = target / key
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(value)
-        receipt = {"schema": 1, "name": installer.LEGACY_NAME,
-                   "files": {key: installer.digest(value) for key, value in files.items()}}
-        (target / installer.LEGACY_RECEIPT).write_text(json.dumps(receipt))
-        block = files["assets/AGENTS.snippet.md"].replace(b"__SKILL_PATH__", str(target).encode())
-        self.agents.write_bytes(self.original + b"\r\n\r\n" + block.replace(b"\n", b"\r\n") + b"\r\n# User suffix\r\n")
-        return target
-
-    def test_migration_preserves_rules_user_files_modes_and_backup(self):
-        old = self.legacy_install()
-        (old / "custom.txt").write_text("user-added note")
-        (old / "custom.txt").chmod(0o640)
-        before = installer.inventory(old)
-        agents_before = self.agents.read_bytes()
-        result = self.install()
-        dest = self.skills / installer.NAME
-        self.assertFalse(old.exists())
-        self.assertEqual(result["migrated_from"], str(old))
-        self.assertEqual(installer.inventory(Path(result["backup"]) / "skill"), before)
-        self.assertEqual((Path(result["backup"]) / "AGENTS.md").read_bytes(), agents_before)
-        self.assertEqual((dest / "custom.txt").read_text(), "user-added note")
-        self.assertEqual(stat.S_IMODE((dest / "custom.txt").stat().st_mode), 0o640)
-        output = self.agents.read_bytes()
-        self.assertTrue(output.startswith(self.original + b"\r\n\r\n"))
-        self.assertTrue(output.endswith(b"\r\n# User suffix\r\n"))
-        self.assertEqual(output.count(installer.START), 1)
-        self.assertNotIn(installer.LEGACY_START, output)
-        self.assertFalse((dest / installer.LEGACY_RECEIPT).exists())
-        snap = snapshot(self.base)
-        self.assertEqual(self.install()["status"], "already-installed")
-        self.install(check=True)
-        self.assertEqual(snap, snapshot(self.base))
-
-    def test_migration_check_is_zero_write_and_does_not_migrate(self):
-        self.legacy_install()
-        snap = snapshot(self.base)
-        with self.assertRaises(installer.InstallError):
-            self.install(check=True)
-        self.assertEqual(snap, snapshot(self.base))
-
-    def test_modified_legacy_install_refused_without_writes(self):
-        old = self.legacy_install()
-        (old / "SKILL.md").write_text("user edit")
-        snap = snapshot(self.base)
-        with self.assertRaises(installer.InstallError):
-            self.install()
-        self.assertEqual(snap, snapshot(self.base))
-
-    def test_both_names_refused_without_writes(self):
-        self.legacy_install()
-        (self.skills / installer.NAME).mkdir()
-        snap = snapshot(self.base)
-        with self.assertRaises(installer.InstallError):
-            self.install()
-        self.assertEqual(snap, snapshot(self.base))
-
-    def test_mixed_or_broken_legacy_markers_refused(self):
-        cases = [installer.LEGACY_START, installer.LEGACY_END,
-                 installer.LEGACY_END + b"\n" + installer.LEGACY_START,
-                 b"prose " + installer.LEGACY_START + b"\n" + installer.LEGACY_END,
-                 installer.LEGACY_START + b"\n" + installer.LEGACY_END + b"\n" + installer.START + b"\n" + installer.END]
-        for bad in cases:
-            with self.subTest(bad=bad):
-                self.agents.write_bytes(self.original + b"\n" + bad)
-                snap = snapshot(self.base)
-                with self.assertRaises(installer.InstallError):
-                    self.install()
-                self.assertEqual(snap, snapshot(self.base))
-
-    def test_migration_failure_restores_old_name_and_global_rules(self):
-        old = self.legacy_install()
-        before = installer.inventory(old)
-        agents_before = self.agents.read_bytes()
-        real_write = installer.atomic_write
-
-        def fail_agents(path, data, expected):
-            if path == self.agents:
-                raise OSError("simulated denied global write")
-            return real_write(path, data, expected)
-
-        with patch.object(installer, "atomic_write", side_effect=fail_agents):
-            with self.assertRaises(OSError):
-                self.install()
-        self.assertEqual(before, installer.inventory(old))
-        self.assertFalse((self.skills / installer.NAME).exists())
-        self.assertEqual(agents_before, self.agents.read_bytes())
-        self.assertFalse((self.home / ".relay-install.lock").exists())
-        self.assertFalse((self.home / ".agent-continuity-install.lock").exists())
-
-    def test_legacy_lock_blocks_migration_without_target_changes(self):
-        self.legacy_install()
-        (self.home / ".agent-continuity-install.lock").write_text("old installer active")
-        snap = snapshot(self.base)
-        with self.assertRaises(installer.InstallError):
-            self.install()
-        self.assertEqual(snap, snapshot(self.base))
-
-    def test_discovery_selection_detects_legacy_name_and_cross_name_duplicates(self):
-        old = self.base / ".agents" / "skills" / installer.LEGACY_NAME
-        old.mkdir(parents=True)
-        self.assertEqual(installer.default_skills_dir(self.base, self.home), old.parent)
-        (old.parent / installer.NAME).mkdir()
-        with self.assertRaises(installer.InstallError):
-            installer.default_skills_dir(self.base, self.home)
 
     def test_package_resources_links_and_python_syntax(self):
         files = installer.package(SKILL)
@@ -402,10 +289,45 @@ class ContinuityTests(unittest.TestCase):
             installer.atomic_write(self.agents, b"replace", self.original)
         self.assertEqual(self.agents.read_bytes(), b"new user edit")
 
+    def test_receipt_rejects_wrong_owner_and_unsafe_paths_without_writes(self):
+        self.install()
+        receipt_path = self.skills / installer.NAME / installer.RECEIPT
+        valid = json.loads(receipt_path.read_bytes())
+        invalid = [dict(valid, name="another-skill")]
+        for path in (str(self.base / "outside.txt"), "../outside.txt", installer.RECEIPT):
+            invalid.append(dict(valid, files={path: installer.digest(b"outside")}))
+        for receipt in invalid:
+            with self.subTest(receipt=receipt):
+                receipt_path.write_text(json.dumps(receipt))
+                before = snapshot(self.base)
+                with self.assertRaises(installer.InstallError):
+                    self.install()
+                self.assertEqual(before, snapshot(self.base))
+
+    def test_unrelated_skills_and_managed_rules_remain_untouched(self):
+        others = [self.skills / "another-skill", self.home / "skills" / "another-skill"]
+        for other in others:
+            other.mkdir(parents=True)
+            (other / "SKILL.md").write_text("User-owned skill")
+            (other / "custom.txt").write_text("User note")
+        other_lock = self.home / ".another-skill-install.lock"
+        other_lock.write_text("Keep this lock")
+        block = b"\r\n<!-- another-skill:start -->\r\nKeep these rules.\r\n<!-- another-skill:end -->\r\n"
+        rules = self.original + block
+        self.agents.write_bytes(rules)
+        before = [snapshot(other) for other in others]
+        lock_before = (other_lock.read_bytes(), other_lock.stat().st_mtime_ns)
+        self.assertEqual(installer.default_skills_dir(self.base, self.home), self.base / ".agents" / "skills")
+        self.install()
+        self.install(check=True)
+        self.assertTrue(self.agents.read_bytes().startswith(rules))
+        self.assertEqual(before, [snapshot(other) for other in others])
+        self.assertEqual(lock_before, (other_lock.read_bytes(), other_lock.stat().st_mtime_ns))
+
     def test_discovery_selection_prefers_modern_for_new_install(self):
         self.assertEqual(installer.default_skills_dir(self.base, self.home), self.base / ".agents" / "skills")
 
-    def test_legacy_existing_install_selected_once(self):
+    def test_existing_codex_home_install_selected_once(self):
         old = self.home / "skills" / installer.NAME
         old.mkdir(parents=True)
         self.assertEqual(installer.default_skills_dir(self.base, self.home), old.parent)

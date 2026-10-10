@@ -16,10 +16,6 @@ NAME = "relay"
 RECEIPT = ".relay-install.json"
 START = b"<!-- relay:start -->"
 END = b"<!-- relay:end -->"
-LEGACY_NAME = "agent-continuity"
-LEGACY_RECEIPT = ".agent-continuity-install.json"
-LEGACY_START = b"<!-- agent-continuity:start -->"
-LEGACY_END = b"<!-- agent-continuity:end -->"
 REQUIRED = (
     "SKILL.md", "agents/openai.yaml", "assets/AGENTS.snippet.md",
     "assets/PROJECT.template.md", "assets/HANDOFF.template.md",
@@ -100,28 +96,20 @@ def merge_agents(original, snippet):
     original = original or b""
     original.decode("utf-8")
     snippet.decode("utf-8")
-    pairs = [(START, END), (LEGACY_START, LEGACY_END)]
-    present = []
-    for first, last in pairs:
-        if original.count(first) != original.count(last) or original.count(first) > 1:
-            raise InstallError("AGENTS 标记不明确或重复，未写入")
-        if first in original:
-            present.append((first, last))
-    if len(present) > 1:
-        raise InstallError("新旧托管块同时存在，先核对再迁移")
+    if original.count(START) != original.count(END) or original.count(START) > 1:
+        raise InstallError("AGENTS 标记不明确或重复，未写入")
     newline = b"\r\n" if b"\r\n" in original else b"\n"
     snippet = snippet.strip(b"\r\n").replace(b"\r\n", b"\n").replace(b"\n", newline)
     if snippet.count(START) != 1 or snippet.count(END) != 1:
         raise InstallError("全局规则模板无效")
-    if present:
-        first, last = present[0]
-        start, end = original.index(first), original.index(last)
+    if START in original:
+        start, end = original.index(START), original.index(END)
         if start >= end:
             raise InstallError("AGENTS 起止标记顺序错误")
-        for token, pos in ((first, start), (last, end)):
+        for token, pos in ((START, start), (END, end)):
             if (pos and original[pos - 1:pos] != b"\n") or original[pos + len(token):pos + len(token) + 1] not in (b"", b"\n", b"\r"):
                 raise InstallError("AGENTS 标记必须独占一行")
-        return original[:start] + snippet + original[end + len(last):]
+        return original[:start] + snippet + original[end + len(END):]
     separator = b"" if not original else (newline if original.endswith(b"\n") else newline * 2)
     return original + separator + snippet + newline
 
@@ -143,18 +131,18 @@ def inventory(directory):
     return result
 
 
-def check_owned(existing, name=NAME, receipt_key=RECEIPT):
+def check_owned(existing):
     if existing is None:
         return
-    if receipt_key not in existing:
+    if RECEIPT not in existing:
         raise InstallError("已有 Skill 缺少安装归属凭据，保留原内容并人工核对")
     try:
-        receipt = json.loads(existing[receipt_key])
+        receipt = json.loads(existing[RECEIPT])
         hashes = receipt["files"]
-        if receipt["schema"] != 1 or receipt["name"] != name or not isinstance(hashes, dict) or not hashes:
+        if receipt["schema"] != 1 or receipt["name"] != NAME or not isinstance(hashes, dict) or not hashes:
             raise ValueError("安装凭据无效")
         for relative, expected in hashes.items():
-            if relative in (RECEIPT, LEGACY_RECEIPT) or Path(relative).is_absolute() or ".." in Path(relative).parts:
+            if relative == RECEIPT or Path(relative).is_absolute() or ".." in Path(relative).parts:
                 raise ValueError("安装凭据含不安全路径")
             if relative not in existing or digest(existing[relative]) != expected:
                 raise InstallError(f"托管文件已被本地修改或缺失： {relative}；不覆盖")
@@ -184,10 +172,9 @@ def atomic_write(path, data, expected):
 
 def default_skills_dir(home, codex_home):
     modern = home / ".agents" / "skills"
-    legacy = codex_home / "skills"
-    candidates = [p for p in dict.fromkeys((modern, legacy))
-                  for name in (NAME, LEGACY_NAME)
-                  if (p / name).exists() or (p / name).is_symlink()]
+    codex_skills = codex_home / "skills"
+    candidates = [p for p in dict.fromkeys((modern, codex_skills))
+                  if (p / NAME).exists() or (p / NAME).is_symlink()]
     if len(candidates) > 1:
         raise InstallError("现代与旧目录存在重复安装，先确认客户端发现位置再安装")
     return candidates[0] if candidates else modern
@@ -196,21 +183,14 @@ def default_skills_dir(home, codex_home):
 def install(source, skills_dir, codex_home, check=False):
     source, skills_dir, codex_home = map(absolute, (source, skills_dir, codex_home))
     dest, agents = skills_dir / NAME, codex_home / "AGENTS.md"
-    legacy_dest = skills_dir / LEGACY_NAME
-    for path in (dest, legacy_dest, agents, codex_home / "AGENTS.override.md"):
+    for path in (dest, agents, codex_home / "AGENTS.override.md"):
         reject_links(path)
     override = read_regular(codex_home / "AGENTS.override.md")
     if override and override.strip():
         raise InstallError("非空全局 AGENTS.override.md 覆盖 AGENTS.md，需先明确解决")
     files = package(source)
-    current, legacy_existing = inventory(dest), inventory(legacy_dest)
-    if current is not None and legacy_existing is not None:
-        raise InstallError("relay 与 agent-continuity 同时存在，先核对再迁移")
-    migrating = legacy_existing is not None
-    origin = legacy_dest if migrating else dest
-    existing = legacy_existing if migrating else current
-    receipt_key = LEGACY_RECEIPT if migrating else RECEIPT
-    check_owned(existing, LEGACY_NAME if migrating else NAME, receipt_key)
+    existing = inventory(dest)
+    check_owned(existing)
     original = read_regular(agents)
     slot = str(dest)
     if any(char in slot for char in "`\n\r"):
@@ -219,19 +199,19 @@ def install(source, skills_dir, codex_home, check=False):
     merged = merge_agents(original, snippet)
     desired = dict(existing or {})  # 保留非托管的用户新增文件
     if existing:
-        old_owned = json.loads(existing[receipt_key])["files"]
+        old_owned = json.loads(existing[RECEIPT])["files"]
         for relative in old_owned:
             desired.pop(relative, None)
-        desired.pop(receipt_key, None)
+        desired.pop(RECEIPT, None)
         collisions = (files.keys() & desired.keys()) - {RECEIPT}
         if collisions:
             raise InstallError(f"新版本与用户新增文件同名： {sorted(collisions)}")
     desired.update(files)
     desired[RECEIPT] = (json.dumps({"schema": 1, "name": NAME,
         "files": {key: digest(value) for key, value in files.items()}}, indent=2, sort_keys=True) + "\n").encode()
-    changed_skill, changed_agents = migrating or existing != desired, original != merged
+    changed_skill, changed_agents = existing != desired, original != merged
     report = {"skill_path": str(dest), "global_rules": str(agents),
-              "files_validated": len(files), "migrated_from": str(origin) if migrating else None,
+              "files_validated": len(files),
               "changed_skill": changed_skill,
               "changed_global_rules": changed_agents, "backup": None,
               "discovery": "未验证：请在新的 Codex 会话中检查实际发现能力",
@@ -246,24 +226,17 @@ def install(source, skills_dir, codex_home, check=False):
         return report
 
     codex_home.mkdir(parents=True, exist_ok=True)
-    locks = [codex_home / ".relay-install.lock"]
-    if migrating:
-        locks.insert(0, codex_home / ".agent-continuity-install.lock")
-    acquired = []
+    lock = codex_home / ".relay-install.lock"
     try:
-        for lock in locks:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.close(fd)
-            acquired.append(lock)
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
     except OSError as exc:
-        for lock in acquired:
-            lock.unlink()
         raise InstallError("无法获取安装锁，检查权限并确认其他安装器是否仍在运行") from exc
     stage = None
     switched = False
     previous = None
     try:
-        if read_regular(agents) != original or inventory(origin) != existing or (migrating and inventory(dest) is not None):
+        if read_regular(agents) != original or inventory(dest) != existing:
             raise InstallError("安装前发现并发改动")
         backup = codex_home / ".relay-backups" / uuid.uuid4().hex
         reject_links(backup)
@@ -272,7 +245,7 @@ def install(source, skills_dir, codex_home, check=False):
         if original is not None:
             atomic_write(backup / "AGENTS.md", original, None)
         if existing is not None:
-            shutil.copytree(origin, backup / "skill")
+            shutil.copytree(dest, backup / "skill")
         if changed_skill:
             skills_dir.mkdir(parents=True, exist_ok=True)
             stage = Path(tempfile.mkdtemp(prefix=".relay-stage-", dir=skills_dir))
@@ -281,12 +254,12 @@ def install(source, skills_dir, codex_home, check=False):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
                 if existing and relative in existing:
-                    os.chmod(target, stat.S_IMODE((origin / relative).stat().st_mode))
-            if inventory(origin) != existing or (migrating and inventory(dest) is not None):
+                    os.chmod(target, stat.S_IMODE((dest / relative).stat().st_mode))
+            if inventory(dest) != existing:
                 raise InstallError("替换前发现 Skill 并发改动")
             if existing is not None:
                 previous = skills_dir / (".relay-previous-" + uuid.uuid4().hex)
-                os.rename(origin, previous)
+                os.rename(dest, previous)
             os.rename(stage, dest)
             stage = None
             switched = True
@@ -308,10 +281,10 @@ def install(source, skills_dir, codex_home, check=False):
         if switched and inventory(dest) == desired:
             shutil.rmtree(dest)
             if previous is not None:
-                os.rename(previous, origin)
+                os.rename(previous, dest)
                 previous = None
-        elif previous is not None and not origin.exists():
-            os.rename(previous, origin)
+        elif previous is not None and not dest.exists():
+            os.rename(previous, dest)
             previous = None
         raise
     finally:
@@ -320,8 +293,7 @@ def install(source, skills_dir, codex_home, check=False):
         if previous and previous.exists():
             # 并发编辑阻止回滚时保留可恢复副本。
             report["retained_previous"] = str(previous)
-        for lock in acquired:
-            lock.unlink()
+        lock.unlink()
     # 各文件写入独立原子化；两处写入之间中断可恢复，但不是跨目标事务。
 
 

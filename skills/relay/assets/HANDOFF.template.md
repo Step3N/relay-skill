@@ -1,6 +1,6 @@
 # 当前工作交接
 
-Schema: agent-continuity/v1
+Schema: relay/v1
 Updated: 尚未填写（日期与时区）
 
 ## 当前请求与授权范围

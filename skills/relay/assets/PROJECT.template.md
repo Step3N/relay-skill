@@ -1,6 +1,6 @@
 # 项目长期记忆
 
-Schema: agent-continuity/v1
+Schema: relay/v1
 Updated: 尚未填写（日期与时区）
 
 ## 项目背景与目标
