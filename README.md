@@ -80,7 +80,7 @@ Relay 保存的是重要信息和工作进展，不能恢复完整聊天记录�
 
 日常只依赖 Skill 和本地 Markdown 文档，无需后台服务、Hooks、MCP、数据库或额外模型 API。可选安装和初始化工具只使用 Python 3.10+ 标准库。
 
-当前版本 **1.0.2**。兼容初版 Agent Continuity 的项目记忆，无需重建 `.ai`。
+当前版本 **1.0.2**。
 
 ## 验证
 
@@ -88,6 +88,6 @@ Relay 保存的是重要信息和工作进展，不能恢复完整聊天记录�
 python3 -m unittest discover -s tests -v
 ```
 
-测试覆盖安装、更新和旧版迁移中的文件保护，以及初始化保留已有内容、只读检查不写入。GitHub Actions 在 Python 3.10/3.13 运行同一套测试。实际行为的验证范围见[验证记录](VERIFICATION.md)和[验收场景](tests/scenarios.md)。
+测试覆盖安装、更新中的文件保护，以及初始化保留已有内容、只读检查不写入。GitHub Actions 在 Python 3.10/3.13 运行同一套测试。实际行为的验证范围见[验证记录](VERIFICATION.md)和[验收场景](tests/scenarios.md)。
 
 MIT License。
