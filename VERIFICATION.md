@@ -18,7 +18,10 @@
 | 客户端实际发现 | Codex 原生 skills/list 返回 relay，scope=user、enabled=true、正确路径与中文 UI，无相关解析错误；未创建模型任务 |
 | 全局规则加载 | 本轮会话实际收到新的 relay 中文全局规则 |
 | 旧记忆兼容 | 两份模板保留 agent-continuity/v1 Schema，改名不修改已有项目 .ai |
-| GitHub 与打包 | 发布完成后补充实际结果，不以本地检查替代远端验证 |
+| GitHub 公开仓库 | 已上传 https://github.com/Step3N/relay-skill，README 页面显示完整中文痛点、安装提示词与三步使用方法 |
+| GitHub 首轮 CI | 提交 92cfbe6 的 Python 3.10/3.13 两个作业均成功：[运行记录](https://github.com/Step3N/relay-skill/actions/runs/38042300714) |
+| CI 维护 | 首轮实际出现 Node.js 20 提示；升级为官方 checkout@v5 / setup-python@v6，新运行结果可在仓库 Actions 中核验 |
+| 打包方式 | 从最终 Git 提交导出 ZIP，逐文件核对字节、文件清单并计算 SHA256；附件见仓库 Releases |
 
 本机迁移备份为 `.relay-backups/2c39fcfbf03247bc909a7fcf8de1102a/`，位于本机 CODEX_HOME 内，不包含于公开仓库。发布包不含开发记忆、凭据、Git 元数据或缓存。
 
