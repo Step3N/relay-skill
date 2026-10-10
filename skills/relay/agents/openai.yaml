@@ -1,6 +1,6 @@
 interface:
-  display_name: "Relay · 项目接续"
-  short_description: "自动维护中文项目记忆，核对实际进度，确认后再继续开发"
+  display_name: "Relay · 项目记忆与交接"
+  short_description: "自动记录项目进展，换个会话也能接着干"
   default_prompt: "使用 $relay resume，只读核对项目并用中文汇报目标、约束、计划、实际进度和差异，等待我明确确认。"
 policy:
   allow_implicit_invocation: true

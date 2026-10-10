@@ -1,5 +1,5 @@
 <!-- relay:start -->
-## Relay：中文项目记忆
+## Relay：项目记忆与交接
 
 执行实际项目规划或开发时，使用已安装的 `relay` Skill：
 `__SKILL_PATH__/SKILL.md`。
